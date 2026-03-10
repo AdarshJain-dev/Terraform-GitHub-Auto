@@ -56,11 +56,11 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -out=tfplan
         env:
-          TF_VAR_github_token: ${{ secrets.GITHUB_TOKEN_TF }}
+          TF_VAR_github_token: ${{ secrets.TF_GITHUB_TOKEN }}
 
       # ── 8. Terraform Apply (only on push to main) ─────────────────────────
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: terraform apply -auto-approve tfplan
         env:
-          TF_VAR_github_token: ${{ secrets.GITHUB_TOKEN_TF }}
+          TF_VAR_github_token: ${{ secrets.TF_GITHUB_TOKEN }}
