@@ -215,17 +215,19 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage the file FIRST before rebasing.
-          # git pull --rebase fails if there are unstaged changes in the working tree.
           git add terraform.tfvars.json
 
-          # Now it is safe to pull and rebase — working tree is clean.
-          git pull --rebase origin main
-
+          # Check if there is anything new to commit before touching git history
           if git diff --staged --quiet; then
             echo "✅ tfvars.json unchanged – nothing to commit."
-          else
-            git commit -m "ci: save instance_id for EC2 '${{ steps.vars.outputs.ec2_name }}' → $(jq -r '.instance_id' terraform.tfvars.json)"
-            git push origin main
-            echo "✅ instance_id committed and pushed."
+            exit 0
           fi
+
+          # Commit locally first — working tree and index are now clean
+          git commit -m "ci: save instance_id for EC2 '${{ steps.vars.outputs.ec2_name }}' → $(jq -r '.instance_id' terraform.tfvars.json)"
+
+          # NOW pull --rebase is safe: no staged or unstaged changes remain
+          git pull --rebase origin main
+
+          git push origin main
+          echo "✅ instance_id committed and pushed."
