@@ -1,20 +1,32 @@
 # ============================================================
-#  ROOT main.tf  –  Entry point for all infrastructure
+#  ROOT main.tf  –  All AWS resources managed in one place
 # ============================================================
 #
-#  HOW IT WORKS (beginner-friendly):
-#  1. AWS provider is declared here (region from tfvars)
-#  2. We call the "ec2" module which holds the EC2 resource
-#  3. All values come from terraform.tfvars.json
+#  RESOURCES MANAGED HERE:
+#    - EC2 instances   (modules/ec2)
+#    - S3 buckets      (modules/s3)
+#    - IAM users       (modules/iam)
 #
-#  HOW UNIQUENESS WORKS:
-#  - AWS Name tags are NOT unique → Terraform cannot use them
-#    to find an existing EC2. Two EC2s can have the same name.
-#  - Terraform uses instance_id (e.g. i-0abc1234) as the real identifier.
-#  - The CI/CD pipeline stores instance_id in terraform.tfvars.json
-#    after the first creation, and imports it on every re-run.
-#  - This means: same ec2_name + same instance_id = update existing EC2
-#                new ec2_name + empty instance_id  = create new EC2
+#  HOW TO ADD MORE RESOURCES:
+#    1. Create a new folder under modules/ (e.g. modules/rds)
+#    2. Add main.tf, variables.tf, outputs.tf inside it
+#    3. Add a module block here calling it with for_each
+#    4. Add the variable definition in variables.tf
+#    5. Add the values in terraform.tfvars.json
+#    → Same pipeline, same S3 state, zero other changes needed
+#
+#  ONE TFSTATE FILE IN S3 TRACKS EVERYTHING:
+#    s3://terraform-state-bucket-prasamjain/terraform/all-resources/terraform.tfstate
+#
+#    Inside that file each resource is tracked individually:
+#      module.ec2["web-server"].aws_instance.this
+#      module.ec2["app-server"].aws_instance.this
+#      module.s3["app-uploads"].aws_s3_bucket.this
+#      module.s3["logs"].aws_s3_bucket.this
+#      module.iam["dev-user"].aws_iam_user.this
+#
+#    Add/remove/change any one resource → only that resource is affected
+#    Re-run unchanged                   → "No changes" for everything
 # ============================================================
 
 terraform {
@@ -26,6 +38,17 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # ── S3 Backend ───────────────────────────────────────────
+  # Single state file tracks ALL resources (EC2 + S3 + IAM + more)
+  # ─────────────────────────────────────────────────────────
+  backend "s3" {
+    bucket         = "terraform-state-bucket-prasamjain"
+    key            = "terraform/all-resources/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-state-lock"
+    encrypt        = true
+  }
 }
 
 # ── AWS Provider ─────────────────────────────────────────────
@@ -33,29 +56,82 @@ provider "aws" {
   region = var.aws_region
 }
 
-# ── EC2 Module ───────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════
+#  EC2 INSTANCES
+#  for_each creates one EC2 per entry in ec2_instances map
+# ═════════════════════════════════════════════════════════════
 module "ec2" {
-  source = "./modules/ec2"
+  source   = "./modules/ec2"
+  for_each = var.ec2_instances
 
-  ec2_name      = var.ec2_name
-  ami           = var.ami
-  instance_type = var.instance_type
-  key_name      = var.key_name
-  tags          = var.tags
+  ec2_name      = each.key
+  ami           = each.value.ami
+  instance_type = each.value.instance_type
+  key_name      = each.value.key_name
+  tags          = each.value.tags
 }
 
-# ── Outputs ──────────────────────────────────────────────────
-output "instance_id" {
-  description = "The unique AWS ID of the EC2 instance (e.g. i-0abc1234)"
-  value       = module.ec2.instance_id
+# ═════════════════════════════════════════════════════════════
+#  S3 BUCKETS
+#  for_each creates one S3 bucket per entry in s3_buckets map
+# ═════════════════════════════════════════════════════════════
+module "s3" {
+  source   = "./modules/s3"
+  for_each = var.s3_buckets
+
+  bucket_name        = each.key
+  versioning_enabled = each.value.versioning_enabled
+  force_destroy      = each.value.force_destroy
+  tags               = each.value.tags
 }
 
-output "public_ip" {
-  description = "Public IP address of the EC2 instance"
-  value       = module.ec2.public_ip
+# ═════════════════════════════════════════════════════════════
+#  IAM USERS
+#  for_each creates one IAM user per entry in iam_users map
+# ═════════════════════════════════════════════════════════════
+module "iam" {
+  source   = "./modules/iam"
+  for_each = var.iam_users
+
+  user_name   = each.key
+  path        = each.value.path
+  policy_arns = each.value.policy_arns
+  tags        = each.value.tags
 }
 
-output "instance_state" {
-  description = "Current state: running / stopped / terminated"
-  value       = module.ec2.instance_state
+# ═════════════════════════════════════════════════════════════
+#  OUTPUTS  –  printed at end of every apply
+# ═════════════════════════════════════════════════════════════
+
+# ── EC2 outputs ──────────────────────────────────────────────
+output "ec2_instance_ids" {
+  description = "Map of EC2 name → AWS instance ID"
+  value       = { for name, mod in module.ec2 : name => mod.instance_id }
+}
+
+output "ec2_public_ips" {
+  description = "Map of EC2 name → public IP"
+  value       = { for name, mod in module.ec2 : name => mod.public_ip }
+}
+
+output "ec2_states" {
+  description = "Map of EC2 name → running/stopped"
+  value       = { for name, mod in module.ec2 : name => mod.instance_state }
+}
+
+# ── S3 outputs ───────────────────────────────────────────────
+output "s3_bucket_arns" {
+  description = "Map of bucket name → ARN"
+  value       = { for name, mod in module.s3 : name => mod.bucket_arn }
+}
+
+output "s3_bucket_domains" {
+  description = "Map of bucket name → domain name"
+  value       = { for name, mod in module.s3 : name => mod.bucket_domain_name }
+}
+
+# ── IAM outputs ──────────────────────────────────────────────
+output "iam_user_arns" {
+  description = "Map of IAM username → ARN"
+  value       = { for name, mod in module.iam : name => mod.user_arn }
 }

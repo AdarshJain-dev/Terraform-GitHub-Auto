@@ -1,57 +1,63 @@
 # ============================================================
-#  variables.tf  –  All variable declarations for root module
+#  variables.tf  –  Variable declarations for all resources
 # ============================================================
 #  Actual VALUES are set in terraform.tfvars.json
 # ============================================================
 
 variable "aws_region" {
-  description = "AWS region where resources will be created"
+  description = "AWS region where all resources will be created"
   type        = string
   default     = "us-east-1"
 }
 
-variable "ec2_name" {
+# ── EC2 ──────────────────────────────────────────────────────
+variable "ec2_instances" {
   description = <<-EOT
-    Name tag for the EC2 instance.
-    NOTE: Name tags in AWS are NOT unique — Terraform does NOT use this
-    to identify if an EC2 already exists. The real unique ID is instance_id.
-    - Change this name → a NEW EC2 will be created (new instance_id)
-    - Keep same name   → existing EC2 is updated in-place
+    Map of EC2 instances. Each KEY is the unique name (used as Name tag).
+    Add a new key   → new EC2 created
+    Remove a key    → that EC2 destroyed
+    Change a value  → that EC2 updated in place
+    Re-run unchanged → No changes
   EOT
-  type        = string
+  type = map(object({
+    ami           = string
+    instance_type = string
+    key_name      = string
+    tags          = map(string)
+  }))
+  default = {}
 }
 
-variable "instance_id" {
+# ── S3 ───────────────────────────────────────────────────────
+variable "s3_buckets" {
   description = <<-EOT
-    AWS EC2 Instance ID (e.g. i-0abc1234567890).
-    - Leave EMPTY ("") on first run → pipeline creates EC2 and fills this automatically.
-    - After first run → pipeline writes the real instance_id here.
-    - On every re-run → pipeline imports this ID into state so Terraform
-      knows the EC2 already exists → plan shows 0 changes if nothing changed.
+    Map of S3 buckets. Each KEY is the bucket name (must be globally unique).
+    Add a new key   → new bucket created
+    Remove a key    → that bucket destroyed (only if force_destroy = true)
+    Change a value  → that bucket updated in place
+    Re-run unchanged → No changes
   EOT
-  type    = string
-  default = ""
+  type = map(object({
+    versioning_enabled = bool
+    force_destroy      = bool
+    tags               = map(string)
+  }))
+  default = {}
 }
 
-variable "ami" {
-  description = "AMI ID for the EC2 instance (must exist in the selected region)"
-  type        = string
-}
-
-variable "instance_type" {
-  description = "EC2 instance type (e.g. t2.micro, t3.micro, t3.small)"
-  type        = string
-  default     = "t3.micro"
-}
-
-variable "key_name" {
-  description = "Name of an existing EC2 Key Pair for SSH access (leave empty string if not needed)"
-  type        = string
-  default     = ""
-}
-
-variable "tags" {
-  description = "Additional tags to apply to the EC2 instance"
-  type        = map(string)
-  default     = {}
+# ── IAM ──────────────────────────────────────────────────────
+variable "iam_users" {
+  description = <<-EOT
+    Map of IAM users. Each KEY is the IAM username.
+    Add a new key   → new IAM user created
+    Remove a key    → that IAM user destroyed
+    Change a value  → that IAM user updated in place
+    Re-run unchanged → No changes
+  EOT
+  type = map(object({
+    path        = string
+    policy_arns = list(string)
+    tags        = map(string)
+  }))
+  default = {}
 }
